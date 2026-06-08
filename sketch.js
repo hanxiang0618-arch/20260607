@@ -20,6 +20,7 @@ let gameState = "START"; // START, PLAY, OVER
 let isModelReady = false;
 let gameTimer = 30;
 let lastTimeCheck = 0;
+let currentFacingMode = "user"; // "user" 或 "environment"
 
 // 💡 v3 修正：分開管理「目前穩定手勢」與「供 spawnTrash 用的手勢」
 //    lastStabilizedGesture 只在非 cooldown 期間更新，避免 cooldown 時被清零
@@ -53,7 +54,11 @@ function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(1);
 
-  video = createCapture(VIDEO);
+  let constraints = {
+    video: { facingMode: currentFacingMode },
+    audio: false
+  };
+  video = createCapture(constraints);
   video.size(320, 240);
 
   handPose = ml5.handPose({ flipped: true }, () => {
@@ -78,10 +83,9 @@ function draw() {
   if (gameState === "START") {
     cursor(ARROW);
     drawStartScreen();
-  } else if (gameState === "PLAY" || gameState === "OVER") {
+  } else if (gameState === "PLAY") {
     noCursor();
     drawGame();
-    updateTimer();
   } else if (gameState === "OVER") {
     cursor(ARROW);
     drawOverScreen();
@@ -123,17 +127,37 @@ function drawCameraPreview() {
   let previewX = width - previewW - 15;
   let previewY = 15;
 
+  // 檢查滑鼠是否在切換按鈕上 (位於預覽視窗右下角)
+  let btnSize = 30;
+  let btnX = previewX + previewW - btnSize - 5;
+  let btnY = previewY + previewH - 22 - btnSize - 5;
+  let isOverFlip = mouseX > btnX && mouseX < btnX + btnSize && mouseY > btnY && mouseY < btnY + btnSize;
+
   push();
   translate(previewX, previewY);
+  
+  // 只有前鏡頭 (user) 才需要鏡像反轉
   push();
-  translate(previewW, 0);
-  scale(-1, 1);
+  if (currentFacingMode === "user") {
+    translate(previewW, 0);
+    scale(-1, 1);
+  }
   image(video, 0, 0, previewW, previewH);
   pop();
+
   noFill();
   stroke(255, 100);
   strokeWeight(1.5);
   rect(0, 0, previewW, previewH, 4);
+
+  // 切換鏡頭按鈕 UI
+  fill(isOverFlip ? 255 : 200, 150);
+  noStroke();
+  ellipse(previewW - btnSize/2 - 5, previewH - 22 - btnSize/2 - 5, btnSize);
+  fill(0);
+  textSize(14);
+  text("🔄", previewW - btnSize/2 - 5, previewH - 22 - btnSize/2 - 7);
+
   fill(0, 180);
   noStroke();
   rect(0, previewH - 22, previewW, 22, 0, 0, 4, 4);
@@ -142,6 +166,31 @@ function drawCameraPreview() {
   textAlign(CENTER, CENTER);
   text("📷 攝影機預覽", previewW / 2, previewH - 11);
   pop();
+}
+
+// ── 切換前後鏡頭邏輯 ──────────────────────────────────
+function switchCamera() {
+  if (!isModelReady) return;
+  
+  currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
+  
+  if (video) {
+    video.remove(); // 移除舊的 video 元件
+  }
+
+  let constraints = {
+    video: { facingMode: currentFacingMode },
+    audio: false
+  };
+
+  video = createCapture(constraints, () => {
+    // 重新連接 AI 偵測到新的視訊流
+    handPose.detectStart(video, (results) => {
+      hands = results;
+    });
+  });
+  video.size(320, 240);
+  video.hide();
 }
 
 // ── 模型載入遮罩 ──────────────────────────────────────
@@ -378,6 +427,12 @@ function detectGesture(hand) {
     return "回收";
   }
 
+  // 👌 OK：拇指與食指尖靠近（形成圓圈），中指、無名指、小指伸直
+  let dThumbIndex = dist(thumb.x, thumb.y, index.x, index.y);
+  if (dThumbIndex < ref * 0.6 && middleExt && ringExt && pinkyExt) {
+    return "OK";
+  }
+
   // ☝️ 準備：只有食指伸直，其餘明確彎曲
   // 加入嚴格條件：中指、無名、小指都必須明確縮短
   if (indexExt && middleCurl && ringCurl && pinkyCurl && !thumbExt) {
@@ -555,7 +610,40 @@ function drawStartScreen() {
 
 // ── 結束畫面 ──────────────────────────────────────────
 function drawOverScreen() {
-  fill(0, 0, 0, 200);
+  // 💡 v3.1: 在結束畫面也進行手勢偵測，以支援 👌 重新開始
+  let currentGesture = "NONE";
+  if (hands && hands.length > 0 && hands[0].keypoints) {
+    let hand = hands[0];
+    let rawGesture = detectGesture(hand);
+    
+    gestureBuffer.push(rawGesture);
+    if (gestureBuffer.length > GESTURE_CONFIRM_FRAMES) {
+      gestureBuffer.shift();
+    }
+
+    if (
+      gestureBuffer.length === GESTURE_CONFIRM_FRAMES &&
+      gestureBuffer.every((g) => g === rawGesture) &&
+      rawGesture !== "NONE"
+    ) {
+      currentGesture = rawGesture;
+    }
+
+    // 更新游標位置
+    let palmCenter = hand.keypoints[9];
+    let targetX = map(palmCenter.x, 0, 320, 0, width);
+    let targetY = map(palmCenter.y, 0, 240, 0, height);
+    logoX = lerp(logoX, targetX, 0.3);
+    logoY = lerp(logoY, targetY, 0.3);
+  }
+
+  // 如果偵測到 OK，重新開始遊戲
+  if (currentGesture === "OK") {
+    resetGame();
+    return;
+  }
+
+  fill(0, 0, 0, 220);
   noStroke();
   rect(0, 0, width, height);
 
@@ -588,9 +676,13 @@ function drawOverScreen() {
   fill("#FFEB3B");
   text(stars, width / 2, height / 2 + 5);
 
-  textSize(20);
+  textSize(18);
   fill(180);
   text(comment, width / 2, height / 2 + 55);
+
+  fill("#FFEB3B");
+  textSize(22);
+  text("👌 比出 OK 手勢重新挑戰", width / 2, height / 2 + 185);
 
   let btnX = width / 2 - 90;
   let btnY = height / 2 + 110;
@@ -615,6 +707,15 @@ function drawOverScreen() {
   textSize(22);
   text("再玩一次 🔄", 0, 0);
   pop();
+
+  // 在結束畫面也顯示手勢提示（讓玩家知道有沒有比對）
+  push();
+  translate(logoX, logoY);
+  textSize(40);
+  textAlign(CENTER, CENTER);
+  fill(currentGesture === "OK" ? "#4CAF50" : 255, 150);
+  text(currentGesture === "OK" ? "👌" : "✋", 0, 0);
+  pop();
 }
 
 // ── 滑鼠點擊 ──────────────────────────────────────────
@@ -629,6 +730,14 @@ function touchStarted() {
 }
 
 function handleInput() {
+  // 檢查是否點擊切換鏡頭按鈕
+  let previewW = min(180, width * 0.25);
+  let previewH = previewW * 0.75;
+  if (mouseX > width - 50 && mouseX < width - 15 && mouseY > 15 && mouseY < 15 + previewH) {
+    switchCamera();
+    return;
+  }
+
   if (gameState === "START") {
     if (!isModelReady) return;
     if (
