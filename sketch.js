@@ -78,13 +78,17 @@ function draw() {
   if (gameState === "START") {
     cursor(ARROW);
     drawStartScreen();
-  } else if (gameState === "PLAY") {
+  } else if (gameState === "PLAY" || gameState === "OVER") {
     noCursor();
     drawGame();
     updateTimer();
   } else if (gameState === "OVER") {
     cursor(ARROW);
     drawOverScreen();
+  }
+
+  if (gameState === "PLAY") {
+    updateTimer();
   }
 
   drawCameraPreview();
@@ -114,8 +118,8 @@ function draw() {
 
 // ── 攝影機預覽 ────────────────────────────────────────
 function drawCameraPreview() {
-  let previewW = 180;
-  let previewH = 135;
+  let previewW = min(180, width * 0.25);
+  let previewH = previewW * 0.75;
   let previewX = width - previewW - 15;
   let previewY = 15;
 
@@ -134,7 +138,7 @@ function drawCameraPreview() {
   noStroke();
   rect(0, previewH - 22, previewW, 22, 0, 0, 4, 4);
   fill(255, 200);
-  textSize(11);
+  textSize(previewW * 0.06);
   textAlign(CENTER, CENTER);
   text("📷 攝影機預覽", previewW / 2, previewH - 11);
   pop();
@@ -278,8 +282,9 @@ function drawHandCursor(gesture, debugInfo) {
       : gesture === "準備"
       ? color(255, 200, 0)
       : color(255, 255, 255, 150);
-
-  textSize(42);
+  
+  let baseSize = min(width, height) * 0.08;
+  textSize(baseSize);
   textAlign(CENTER, CENTER);
   fill(gesture !== "NONE" ? cursorColor : color(255, 100));
   text(gesture !== "NONE" ? "👉 " + gesture : "等待手勢...", width / 2, height / 2);
@@ -438,20 +443,21 @@ function drawBins() {
 
 // ── HUD / UI ─────────────────────────────────────────
 function drawUI() {
+  let uiW = min(155, width * 0.3);
   fill(0, 0, 0, 180);
   noStroke();
-  rect(15, 15, 155, 50, 8);
+  rect(15, 15, uiW, 50, 8);
   fill(255);
-  textSize(20);
+  textSize(uiW * 0.15);
   textAlign(LEFT, CENTER);
   text("🏆 " + score + " 分", 30, 40);
 
   let timeColor = gameTimer <= 10 ? color(255, 87, 34) : color(255);
   fill(0, 0, 0, 180);
   noStroke();
-  rect(15, 75, 155, 50, 8);
+  rect(15, 75, uiW, 50, 8);
   fill(timeColor);
-  textSize(20);
+  textSize(uiW * 0.15);
   textAlign(LEFT, CENTER);
   if (gameTimer <= 10 && frameCount % 30 < 15) {
     fill(255, 87, 34);
@@ -480,28 +486,31 @@ function drawStartScreen() {
     line(0, y, width, y);
   }
 
+  let titleSize = min(46, width * 0.08);
   noStroke();
   textAlign(CENTER, CENTER);
-  textSize(46);
+  textSize(titleSize);
   fill("#FFEB3B");
   text("🌟 AR 環保小尖兵 🌟", width / 2, height / 2 - 130);
 
-  textSize(16);
+  textSize(titleSize * 0.4);
   fill(180, 230, 180);
   text("用手勢拯救地球！", width / 2, height / 2 - 88);
 
+  let boxW = min(400, width * 0.9);
   fill(0, 0, 0, 160);
-  rect(width / 2 - 200, height / 2 - 65, 400, 175, 12);
+  rect(width / 2 - boxW / 2, height / 2 - 65, boxW, 185, 12);
 
+  let contentSize = min(18, width * 0.04);
   fill(220);
-  textSize(18);
+  textSize(contentSize * 1.1);
   text("【操作指南】", width / 2, height / 2 - 42);
 
-  textSize(16);
+  textSize(contentSize);
   fill(255);
   text("看到垃圾掉落時，比出對應手勢即可分類：", width / 2, height / 2 - 12);
 
-  textSize(20);
+  textSize(contentSize * 1.2);
   fill("#FFC107");
   text("☝️  食指 → 召喚垃圾", width / 2, height / 2 + 20);
   fill("#64B5F6");
@@ -512,7 +521,7 @@ function drawStartScreen() {
   text("✊  握拳 → 廚餘桶", width / 2, height / 2 + 104);
 
   if (!isModelReady) {
-    fill(255, 165, 0, 200);
+    fill(255, 165, 0, 180);
     rect(width / 2 - 130, height / 2 + 125, 260, 50, 25);
     fill(40);
     textSize(18);
@@ -552,11 +561,11 @@ function drawOverScreen() {
 
   textAlign(CENTER, CENTER);
 
-  textSize(48);
+  textSize(min(48, width * 0.1));
   fill("#FFEB3B");
   text("⏳ 挑戰結束！", width / 2, height / 2 - 110);
 
-  textSize(32);
+  textSize(min(32, width * 0.07));
   fill(255);
   text("你的最終得分：" + score + " 分", width / 2, height / 2 - 50);
 
@@ -610,22 +619,28 @@ function drawOverScreen() {
 
 // ── 滑鼠點擊 ──────────────────────────────────────────
 function mousePressed() {
+  handleInput();
+}
+
+// ── 觸控支援 ──────────────────────────────────────────
+function touchStarted() {
+  handleInput();
+  return false; // 防止螢幕捲動
+}
+
+function handleInput() {
   if (gameState === "START") {
     if (!isModelReady) return;
     if (
-      mouseX > width / 2 - 90 &&
-      mouseX < width / 2 + 90 &&
-      mouseY > height / 2 + 125 &&
-      mouseY < height / 2 + 175
+      mouseX > width / 2 - 100 && mouseX < width / 2 + 100 &&
+      mouseY > height / 2 + 120 && mouseY < height / 2 + 180
     ) {
       resetGame();
     }
   } else if (gameState === "OVER") {
     if (
-      mouseX > width / 2 - 90 &&
-      mouseX < width / 2 + 90 &&
-      mouseY > height / 2 + 110 &&
-      mouseY < height / 2 + 160
+      mouseX > width / 2 - 100 && mouseX < width / 2 + 100 &&
+      mouseY > height / 2 + 105 && mouseY < height / 2 + 165
     ) {
       resetGame();
     }
